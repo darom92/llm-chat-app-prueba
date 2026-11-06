@@ -15,7 +15,9 @@ const MODEL_ID = "@cf/meta/llama-3.1-8b-instruct-fp8";
 
 // Default system prompt
 const SYSTEM_PROMPT =
-	"You are a helpful, friendly assistant. Provide concise and accurate responses.";
+	const systemPrompt = "Eres un asistente de ventas. Responde en español, con honestidad. " +
+  "Usa la siguiente información de referencia. Si no está cubierta, dilo sin inventar.\n\n" +
+  "Información de referencia:\n" + contexto;
 
 export default {
 	/**
@@ -72,7 +74,11 @@ async function handleChatRequest(
 			max_tokens: 1024,
 			stream: true,
 		} satisfies AiTextGenerationInput & { stream: true };
-
+		
+const resultado = await env.AI.autorag("ventas").aiSearch({
+  query: userMessage, // cambia por el nombre de tu variable
+});
+const contexto = resultado.response;
 		const stream = await env.AI.run<typeof MODEL_ID>(MODEL_ID, inputs, {
 			// Uncomment to use AI Gateway
 			// gateway: {
