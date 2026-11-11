@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="es">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<meta name="robots" content="noindex" />
+		<title>Generador de imágenes</title>
+		<style>
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 16px;
+				font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+				background: #f3f4f6;
+				color: #111827;
+			}
+			.card {
+				max-width: 520px;
+				margin: 0 auto;
+				background: #ffffff;
+				border-radius: 16px;
+				padding: 20px;
+				box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+			}
+			h1 {
+				font-size: 20px;
+				margin-bottom: 14px;
+			}
+			label {
+				display: block;
+				font-size: 14px;
+				margin: 12px 0 6px;
+				color: #374151;
+			}
+			input,
+			textarea {
+				width: 100%;
+				font: inherit;
+				font-size: 15px;
+				padding: 10px 12px;
+				border: 1px solid #d1d5db;
+				border-radius: 10px;
+			}
+			textarea {
+				min-height: 110px;
+				resize: vertical;
+			}
+			button {
+				margin-top: 16px;
+				width: 100%;
+				font: inherit;
+				font-weight: 700;
+				padding: 12px;
+				border: none;
+				border-radius: 10px;
+				background: #111827;
+				color: #ffffff;
+				cursor: pointer;
+			}
+			button:disabled {
+				opacity: 0.5;
+				cursor: not-allowed;
+			}
+			#estado {
+				margin-top: 12px;
+				font-size: 14px;
+				color: #4b5563;
+				min-height: 20px;
+			}
+			#resultado img {
+				width: 100%;
+				margin-top: 16px;
+				border-radius: 12px;
+				display: block;
+			}
+			#descargar {
+				display: inline-block;
+				margin-top: 10px;
+				font-size: 14px;
+				color: #2563eb;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="card">
+			<h1>Generador de imágenes para carruseles</h1>
+
+			<label for="clave">Clave privada</label>
+			<input id="clave" type="password" autocomplete="off" />
+
+			<label for="prompt">Descripción de la imagen (en inglés da mejores resultados)</label>
+			<textarea id="prompt" placeholder="Ej.: minimalist flat illustration of a small bakery storefront, warm orange and cream colors, no text, square format"></textarea>
+
+			<button id="generar">Generar imagen</button>
+			<div id="estado"></div>
+			<div id="resultado"></div>
+		</div>
+
+		<script>
+			const claveInput = document.getElementById("clave");
+			const promptInput = document.getElementById("prompt");
+			const boton = document.getElementById("generar");
+			const estado = document.getElementById("estado");
+			const resultado = document.getElementById("resultado");
+
+			// Recordar la clave en esta sesión del navegador (si el navegador lo permite)
+			try {
+				claveInput.value = sessionStorage.getItem("clave-imagenes") || "";
+			} catch (e) {}
+
+			boton.addEventListener("click", async () => {
+				const prompt = promptInput.value.trim();
+				const clave = claveInput.value;
+				if (!clave || prompt.length < 5) {
+					estado.textContent = "Escribe la clave y una descripción de al menos 5 caracteres.";
+					return;
+				}
+
+				boton.disabled = true;
+				estado.textContent = "Generando imagen… puede tardar unos segundos.";
+				resultado.innerHTML = "";
+
+				try {
+					const respuesta = await fetch("/api/imagen", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ prompt, clave }),
+					});
+					const datos = await respuesta.json();
+
+					if (!respuesta.ok) {
+						throw new Error(datos.error || "Error al generar la imagen");
+					}
+
+					try {
+						sessionStorage.setItem("clave-imagenes", clave);
+					} catch (e) {}
+
+					const img = document.createElement("img");
+					img.src = datos.image;
+					img.alt = prompt;
+					resultado.appendChild(img);
+
+					const enlace = document.createElement("a");
+					enlace.href = datos.image;
+					enlace.download = "carrusel-imagen.jpg";
+					enlace.id = "descargar";
+					enlace.textContent = "Descargar imagen";
+					resultado.appendChild(enlace);
+
+					estado.textContent = "Listo.";
+				} catch (error) {
+					estado.textContent = error.message;
+				} finally {
+					boton.disabled = false;
+				}
+			});
+		</script>
+	</body>
+</html>
