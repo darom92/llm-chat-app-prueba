@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="es">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<meta name="robots" content="noindex" />
+		<title>Editor de carruseles</title>
+		<style>
+			* { box-sizing: border-box; }
+			body {
+				margin: 0;
+				padding: 16px;
+				font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+				background: #f3f4f6;
+				color: #111827;
+			}
+			.card {
+				max-width: 720px;
+				margin: 0 auto 16px;
+				background: #fff;
+				border-radius: 16px;
+				padding: 20px;
+				box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+			}
+			h1 { font-size: 20px; margin-bottom: 4px; }
+			h2 { font-size: 16px; margin-bottom: 10px; }
+			p.nota { font-size: 13px; color: #6b7280; margin-bottom: 12px; }
+			label { display: block; font-size: 14px; margin: 12px 0 6px; color: #374151; }
+			input[type="text"], input[type="password"], textarea {
+				width: 100%;
+				font: inherit;
+				font-size: 15px;
+				padding: 10px 12px;
+				border: 1px solid #d1d5db;
+				border-radius: 10px;
+			}
+			textarea { min-height: 80px; resize: vertical; }
+			button {
+				font: inherit;
+				font-weight: 700;
+				padding: 11px 14px;
+				border: none;
+				border-radius: 10px;
+				background: #111827;
+				color: #fff;
+				cursor: pointer;
+				margin-top: 10px;
+			}
+			button.secundario { background: #e5e7eb; color: #111827; }
+			button:disabled { opacity: 0.5; cursor: not-allowed; }
+			#estado { font-size: 14px; color: #4b5563; margin-top: 10px; min-height: 20px; }
+			.fila { display: flex; gap: 10px; flex-wrap: wrap; }
+			.slide {
+				display: flex;
+				gap: 14px;
+				border: 1px solid #e5e7eb;
+				border-radius: 12px;
+				padding: 12px;
+				margin-top: 12px;
+				flex-wrap: wrap;
+			}
+			.slide canvas { width: 160px; height: 200px; border-radius: 8px; background: #111; }
+			.slide .campos { flex: 1; min-width: 220px; }
+			.resultado img { width: 100%; max-width: 320px; border-radius: 10px; display: block; margin-top: 12px; }
+		</style>
+	</head>
+	<body>
+		<div class="card">
+			<h1>Editor de carruseles</h1>
+			<p class="nota">Sube hasta 4 imágenes, describe el cambio y pulsa Editar. Luego añade la imagen al carrusel y escribe el texto de cada slide.</p>
+
+			<label for="clave">Clave privada</label>
+			<input id="clave" type="password" autocomplete="off" />
+
+			<label for="archivos">Imágenes de entrada (hasta 4)</label>
+			<input id="archivos" type="file" accept="image/*" multiple />
+
+			<label for="instruccion">Qué quieres cambiar (en inglés da mejores resultados)</label>
+			<textarea id="instruccion" placeholder="Ej.: place the product on a warm beige background, soft light, keep the product unchanged"></textarea>
+
+			<button id="editar">Editar imagen</button>
+			<div id="estado-edicion" id="estado"></div>
+			<div id="resultado" class="resultado"></div>
+		</div>
+
+		<div class="card">
+			<h2>Carrusel</h2>
+			<p class="nota">Tamaño por slide: 1080 × 1350 px, listo para Instagram. El texto se dibuja sobre la imagen con una franja oscura abajo.</p>
+			<div class="fila">
+				<button id="nueva-slide" class="secundario">Añadir slide vacía</button>
+				<button id="descargar-todas">Descargar todas</button>
+			</div>
+			<div id="slides"></div>
+			<div id="estado-carrusel" class="estado"></div>
+		</div>
+
+		<script>
+			const claveInput = document.getElementById("clave");
+			const archivosInput = document.getElementById("archivos");
+			const instruccionInput = document.getElementById("instruccion");
+			const botonEditar = document.getElementById("editar");
+			const estadoEdicion = document.getElementById("estado-edicion");
+			const resultado = document.getElementById("resultado");
+			const contenedorSlides = document.getElementById("slides");
+			const estadoCarrusel = document.getElementById("estado-carrusel");
+
+			let slides = [];
+			let ultimaEdicion = null;
+
+			try { claveInput.value = sessionStorage.getItem("clave-editor") || ""; } catch (e) {}
+
+			// Reduce la imagen para que el lado mayor sea de 500 px como máximo (el modelo exige menos de 512)
+			function reducirImagen(archivo, maxLado = 500) {
+				return new Promise((resolve, reject) => {
+					const img = new Image();
+					img.onload = () => {
+						const escala = Math.min(1, maxLado / Math.max(img.width, img.height));
+						const c = document.createElement("canvas");
+						c.width = Math.round(img.width * escala);
+						c.height = Math.round(img.height * escala);
+						c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+						URL.revokeObjectURL(img.src);
+						c.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("No se pudo reducir la imagen"))), "image/jpeg", 0.92);
+					};
+					img.onerror = () => reject(new Error("No se pudo leer una de las imágenes"));
+					img.src = URL.createObjectURL(archivo);
+				});
+			}
+
+			function cargarImagen(src) {
+				return new Promise((resolve, reject) => {
+					const img = new Image();
+					img.onload = () => resolve(img);
+					img.onerror = reject;
+					img.src = src;
+				});
+			}
+
+			botonEditar.addEventListener("click", async () => {
+				const clave = claveInput.value;
+				const instruccion = instruccionInput.value.trim();
+				const archivos = Array.from(archivosInput.files).slice(0, 4);
+
+				if (!clave || instruccion.length < 5) {
+					estadoEdicion.textContent = "Escribe la clave y una instrucción de al menos 5 caracteres.";
+					return;
+				}
+				if (archivos.length === 0) {
+					estadoEdicion.textContent = "Sube al menos una imagen.";
+					return;
+				}
+
+				botonEditar.disabled = true;
+				estadoEdicion.textContent = "Editando… puede tardar bastante.";
+				resultado.innerHTML = "";
+
+				try {
+					const formulario = new FormData();
+					formulario.append("clave", clave);
+					formulario.append("prompt", instruccion);
+					for (const archivo of archivos) {
+						const reducido = await reducirImagen(archivo);
+						formulario.append("imagen", reducido, "entrada.jpg");
+					}
+
+					const respuesta = await fetch("/api/editar", { method: "POST", body: formulario });
+					const datos = await respuesta.json();
+					if (!respuesta.ok) throw new Error(datos.error || "Error al editar");
+
+					try { sessionStorage.setItem("clave-editor", clave); } catch (e) {}
+					ultimaEdicion = datos.image;
+
+					const img = document.createElement("img");
+					img.src = datos.image;
+					resultado.appendChild(img);
+
+					const boton = document.createElement("button");
+					boton.textContent = "Añadir esta imagen al carrusel";
+					boton.addEventListener("click", async () => {
+						slides.push({ src: ultimaEdicion, titulo: "", texto: "" });
+						await renderizarSlides();
+						estadoEdicion.textContent = "Imagen añadida al carrusel.";
+					});
+					resultado.appendChild(boton);
+
+					estadoEdicion.textContent = "Listo.";
+				} catch (error) {
+					estadoEdicion.textContent = error.message;
+				} finally {
+					botonEditar.disabled = false;
+				}
+			});
+
+			// Dibuja una slide de 1080 x 1350
+			function dibujarSlide(canvas, img, titulo, texto) {
+				const ctx = canvas.getContext("2d");
+				canvas.width = 1080;
+				canvas.height = 1350;
+
+				ctx.fillStyle = "#111111";
+				ctx.fillRect(0, 0, 1080, 1350);
+
+				if (img) {
+					const escala = Math.max(1080 / img.width, 1350 / img.height);
+					const w = img.width * escala;
+					const h = img.height * escala;
+					ctx.drawImage(img, (1080 - w) / 2, (1350 - h) / 2, w, h);
+				}
+
+				const degradado = ctx.createLinearGradient(0, 560, 0, 1350);
+				degradado.addColorStop(0, "rgba(0,0,0,0)");
+				degradado.addColorStop(1, "rgba(0,0,0,0.85)");
+				ctx.fillStyle = degradado;
+				ctx.fillRect(0, 560, 1080, 790);
+
+				ctx.fillStyle = "#ffffff";
+				ctx.font = "bold 72px sans-serif";
+				let y = escribirTexto(ctx, titulo, 80, 1000, 920, 84);
+				ctx.font = "40px sans-serif";
+				escribirTexto(ctx, texto, 80, y + 16, 920, 52);
+			}
+
+			function escribirTexto(ctx, texto, x, y, maxAncho, alto) {
+				const palabras = (texto || "").split(/\s+/).filter(Boolean);
+				let linea = "";
+				for (const palabra of palabras) {
+					const prueba = linea ? linea + " " + palabra : palabra;
+					if (ctx.measureText(prueba).width > maxAncho && linea) {
+						ctx.fillText(linea, x, y);
+						linea = palabra;
+						y += alto;
+					} else {
+						linea = prueba;
+					}
+				}
+				if (linea) {
+					ctx.fillText(linea, x, y);
+					y += alto;
+				}
+				return y;
+			}
+
+			async function renderizarSlides() {
+				contenedorSlides.innerHTML = "";
+				for (let i = 0; i < slides.length; i++) {
+					const slide = slides[i];
+					const div = document.createElement("div");
+					div.className = "slide";
+
+					const canvas = document.createElement("canvas");
+					const img = slide.src ? await cargarImagen(slide.src) : null;
+					dibujarSlide(canvas, img, slide.titulo, slide.texto);
+					div.appendChild(canvas);
+
+					const campos = document.createElement("div");
+					campos.className = "campos";
+
+					const etiqueta = document.createElement("label");
+					etiqueta.textContent = "Slide " + (i + 1) + " · titular";
+					const titulo = document.createElement("input");
+					titulo.type = "text";
+					titulo.value = slide.titulo;
+					titulo.addEventListener("input", () => { slide.titulo = titulo.value; redibujar(i); });
+
+					const etiquetaTexto = document.createElement("label");
+					etiquetaTexto.textContent = "Texto de apoyo";
+					const texto = document.createElement("textarea");
+					texto.value = slide.texto;
+					texto.addEventListener("input", () => { slide.texto = texto.value; redibujar(i); });
+
+					const subir = document.createElement("input");
+					subir.type = "file";
+					subir.accept = "image/*";
+					subir.addEventListener("change", async () => {
+						if (!subir.files[0]) return;
+						const reducido = await reducirImagen(subir.files[0], 1600);
+						slide.src = URL.createObjectURL(reducido);
+						renderizarSlides();
+					});
+
+					const descargar = document.createElement("button");
+					descargar.className = "secundario";
+					descargar.textContent = "Descargar slide " + (i + 1);
+					descargar.addEventListener("click", () => descargarSlide(canvas, i + 1));
+
+					const borrar = document.createElement("button");
+					borrar.className = "secundario";
+					borrar.textContent = "Quitar";
+					borrar.addEventListener("click", () => { slides.splice(i, 1); renderizarSlides(); });
+
+					campos.append(etiqueta, titulo, etiquetaTexto, texto, document.createElement("br"), subir, document.createElement("br"), descargar, borrar);
+					div.appendChild(campos);
+					contenedorSlides.appendChild(div);
+				}
+			}
+
+			async function redibujar(indice) {
+				const slide = slides[indice];
+				const div = contenedorSlides.children[indice];
+				if (!div) return;
+				const canvas = div.querySelector("canvas");
+				const img = slide.src ? await cargarImagen(slide.src) : null;
+				dibujarSlide(canvas, img, slide.titulo, slide.texto);
+			}
+
+			function descargarSlide(canvas, numero) {
+				canvas.toBlob((blob) => {
+					const enlace = document.createElement("a");
+					enlace.href = URL.createObjectURL(blob);
+					enlace.download = "slide-" + numero + ".png";
+					enlace.click();
+				}, "image/png");
+			}
+
+			document.getElementById("nueva-slide").addEventListener("click", () => {
+				slides.push({ src: null, titulo: "", texto: "" });
+				renderizarSlides();
+			});
+
+			document.getElementById("descargar-todas").addEventListener("click", async () => {
+				const canvases = contenedorSlides.querySelectorAll("canvas");
+				if (canvases.length === 0) {
+					estadoCarrusel.textContent = "Añade al menos una slide.";
+					return;
+				}
+				for (let i = 0; i < canvases.length; i++) {
+					descargarSlide(canvases[i], i + 1);
+					await new Promise((r) => setTimeout(r, 400));
+				}
+				estadoCarrusel.textContent = "Slides descargadas.";
+			});
+		</script>
+	</body>
+</html>
